@@ -1,0 +1,20 @@
+# Core ML
+transformers>=4.38.0
+accelerate>=0.26.0
+datasets>=2.18.0
+evaluate>=0.4.0
+jiwer>=3.0.0
+tqdm>=4.66.0
+
+# Audio
+soundfile>=0.12.1
+librosa>=0.10.1
+scipy>=1.10.0
+numpy>=1.24.0
+
+# Demo voice assistant
+sounddevice>=0.4.6
+pyttsx3>=2.90
+
+# Optional / requested (offline ASR alternative)
+vosk>=0.3.45

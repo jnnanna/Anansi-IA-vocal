@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# HF/Training artifacts
+outputs/
+wandb/
+
+# OS
+.DS_Store
+Thumbs.db
