@@ -46,7 +46,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default="KeraCare/Wolof-Kallaama")
     parser.add_argument("--config", default=None)
     parser.add_argument("--model", default="openai/whisper-small")
-    parser.add_argument("--language", default="wolof", help="Whisper language name, e.g. 'wolof'")
+    parser.add_argument(
+        "--language",
+        default="",
+        help="Optional Whisper language name for decoder prompt (e.g. 'english'). Leave empty to disable.",
+    )
     parser.add_argument("--task", default="transcribe", choices=["transcribe", "translate"])
 
     parser.add_argument("--audio_col", default=None)
@@ -96,11 +100,26 @@ def main() -> None:
     if args.max_eval_samples > 0:
         ds_dict[eval_split] = ds_dict[eval_split].select(range(min(args.max_eval_samples, len(ds_dict[eval_split]))))
 
-    processor = WhisperProcessor.from_pretrained(args.model, language=args.language, task=args.task)
+    # Load processor/model without forcing a language at load time because
+    # some local/low-resource languages (e.g. "wolof") are not in the
+    # tokenizer's supported-language list and will raise a ValueError.
+    processor = WhisperProcessor.from_pretrained(args.model)
     model = WhisperForConditionalGeneration.from_pretrained(args.model)
 
-    # Prompt the decoder with language/task tokens
-    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.language, task=args.task)
+    # Try to set forced_decoder_ids (language+task prompt). If the requested
+    # language isn't supported by the tokenizer, continue without forced ids
+    # and warn the user — the model can still be fine-tuned without the
+    # explicit language prompt token.
+    if args.language:
+        try:
+            model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.language, task=args.task)
+        except ValueError:
+            print(
+                f"Warning: language '{args.language}' not supported by the tokenizer — continuing without forced decoder ids."
+            )
+            model.config.forced_decoder_ids = None
+    else:
+        model.config.forced_decoder_ids = None
     model.config.suppress_tokens = []
 
     def prepare_example(batch: Dict[str, Any]) -> Dict[str, Any]:
