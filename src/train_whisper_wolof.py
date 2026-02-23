@@ -123,21 +123,39 @@ def main() -> None:
     processor = WhisperProcessor.from_pretrained(args.model)
     model = WhisperForConditionalGeneration.from_pretrained(args.model)
 
-    # Try to set forced_decoder_ids (language+task prompt). If the requested
-    # language isn't supported by the tokenizer, continue without forced ids
-    # and warn the user — the model can still be fine-tuned without the
-    # explicit language prompt token.
+    # ── Generation config (transformers 5.x compatible) ──────────────
+    # In transformers ≥5.0, generation-related settings MUST live on
+    # `model.generation_config`, NOT on `model.config`.  Setting them on
+    # model.config triggers:
+    #   ValueError: You have modified the pretrained model configuration
+    #   to control generation … This strategy is not supported anymore.
+    #
+    # We also clean up model.config to make sure no stale generation
+    # keys remain there from the pretrained checkpoint.
+    gen_cfg = model.generation_config
+
+    # forced_decoder_ids — language/task prompt
     if args.language:
         try:
-            model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.language, task=args.task)
+            gen_cfg.forced_decoder_ids = processor.get_decoder_prompt_ids(
+                language=args.language, task=args.task
+            )
         except ValueError:
             print(
-                f"Warning: language '{args.language}' not supported by the tokenizer — continuing without forced decoder ids."
+                f"Warning: language '{args.language}' not supported by the "
+                "tokenizer — continuing without forced decoder ids."
             )
-            model.config.forced_decoder_ids = None
+            gen_cfg.forced_decoder_ids = None
     else:
-        model.config.forced_decoder_ids = None
-    model.config.suppress_tokens = []
+        gen_cfg.forced_decoder_ids = None
+
+    gen_cfg.suppress_tokens = []
+    gen_cfg.max_length = 448  # coherent with max_label_length
+
+    # Remove generation keys from model.config so they don't conflict
+    for key in ("forced_decoder_ids", "suppress_tokens"):
+        if hasattr(model.config, key):
+            delattr(model.config, key)
 
     def prepare_example(batch: Dict[str, Any]) -> Dict[str, Any]:
         audio = batch[audio_col]
@@ -186,13 +204,9 @@ def main() -> None:
         wer = wer_metric.compute(predictions=pred_str, references=label_str)
         return {"wer": float(wer)}
 
-    generation_max_length = 225
-
-    # Build Seq2SeqTrainingArguments in a version-tolerant way:
-    # - Different transformers versions have slightly different kwarg names
-    #   (e.g. evaluation_strategy vs eval_strategy).
-    # - Passing unsupported kwargs raises TypeError.
-    # We inspect the constructor signature and only pass supported kwargs.
+    # ── Build Seq2SeqTrainingArguments (version-tolerant) ──────────
+    # We inspect the constructor signature and only pass supported kwargs,
+    # because kwarg names change across transformers versions.
     sig_params = set(inspect.signature(Seq2SeqTrainingArguments.__init__).parameters.keys())
 
     kwargs: Dict[str, Any] = {
@@ -215,23 +229,28 @@ def main() -> None:
         "remove_unused_columns": False,
     }
 
-    # Evaluation strategy key name changed in some versions
-    if "evaluation_strategy" in sig_params:
-        kwargs["evaluation_strategy"] = "steps"
-        kwargs["eval_steps"] = args.eval_steps
-    elif "eval_strategy" in sig_params:
+    # Evaluation strategy key name changed across versions
+    if "eval_strategy" in sig_params:
         kwargs["eval_strategy"] = "steps"
+    elif "evaluation_strategy" in sig_params:
+        kwargs["evaluation_strategy"] = "steps"
+    if "eval_steps" in sig_params:
         kwargs["eval_steps"] = args.eval_steps
 
-    # Predict-with-generate + generation length are specific to seq2seq
+    # predict_with_generate (seq2seq specific)
     if "predict_with_generate" in sig_params:
         kwargs["predict_with_generate"] = True
+    # generation_max_length was removed in transformers 5.x
+    # (generation config is on the model instead)
     if "generation_max_length" in sig_params:
-        kwargs["generation_max_length"] = generation_max_length
+        kwargs["generation_max_length"] = 448
 
-    # Filter out unsupported kwargs
+    # Filter to only supported kwargs
     filtered_kwargs = {k: v for k, v in kwargs.items() if k in sig_params}
     training_args = Seq2SeqTrainingArguments(**filtered_kwargs)
+
+    # ── Build Seq2SeqTrainer (version-tolerant) ─────────────────────
+    trainer_sig = set(inspect.signature(Seq2SeqTrainer.__init__).parameters.keys())
 
     trainer_kwargs: Dict[str, Any] = {
         "args": training_args,
@@ -241,10 +260,11 @@ def main() -> None:
         "data_collator": data_collator,
         "compute_metrics": compute_metrics,
     }
-    # Some `transformers` versions accept `tokenizer=...` on Seq2SeqTrainer,
-    # others do not. Only pass it when supported.
-    if "tokenizer" in inspect.signature(Seq2SeqTrainer.__init__).parameters:
+    # `tokenizer` kwarg was renamed/removed in some versions
+    if "tokenizer" in trainer_sig:
         trainer_kwargs["tokenizer"] = processor.tokenizer
+    elif "processing_class" in trainer_sig:
+        trainer_kwargs["processing_class"] = processor
 
     trainer = Seq2SeqTrainer(**trainer_kwargs)
 
