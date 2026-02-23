@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from typing import Any, Dict, List
 
 import evaluate
@@ -30,8 +31,26 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    processor = WhisperProcessor.from_pretrained(args.model_dir)
-    model = WhisperForConditionalGeneration.from_pretrained(args.model_dir)
+    # If a local path is provided, ensure it exists before calling HF Hub logic.
+    # When the directory doesn't exist (e.g., training crashed), older hub/transformers
+    # versions may try to validate it as a repo id and raise a confusing error.
+    is_local_dir = os.path.isdir(args.model_dir)
+    if not is_local_dir:
+        raise FileNotFoundError(
+            "Model directory not found. Make sure training (Cellule 8) finished and saved files to --model_dir. "
+            f"Got: {args.model_dir}"
+        )
+
+    required_files = ["config.json", "preprocessor_config.json"]
+    missing = [f for f in required_files if not os.path.exists(os.path.join(args.model_dir, f))]
+    if missing:
+        raise FileNotFoundError(
+            "Model directory exists but is missing required files. Training may have crashed before saving. "
+            f"Missing: {missing} in {args.model_dir}"
+        )
+
+    processor = WhisperProcessor.from_pretrained(args.model_dir, local_files_only=True)
+    model = WhisperForConditionalGeneration.from_pretrained(args.model_dir, local_files_only=True)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)

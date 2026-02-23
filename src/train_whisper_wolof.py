@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import inspect
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
@@ -227,15 +228,20 @@ def main() -> None:
         except Exception:
             pass
 
-    trainer = Seq2SeqTrainer(
-        args=training_args,
-        model=model,
-        train_dataset=ds_train,
-        eval_dataset=ds_eval,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics,
-        tokenizer=processor.feature_extractor,
-    )
+    trainer_kwargs: Dict[str, Any] = {
+        "args": training_args,
+        "model": model,
+        "train_dataset": ds_train,
+        "eval_dataset": ds_eval,
+        "data_collator": data_collator,
+        "compute_metrics": compute_metrics,
+    }
+    # Some `transformers` versions accept `tokenizer=...` on Seq2SeqTrainer,
+    # others do not. Only pass it when supported.
+    if "tokenizer" in inspect.signature(Seq2SeqTrainer.__init__).parameters:
+        trainer_kwargs["tokenizer"] = processor.tokenizer
+
+    trainer = Seq2SeqTrainer(**trainer_kwargs)
 
     trainer.train()
 
