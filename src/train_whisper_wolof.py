@@ -13,7 +13,6 @@ from datasets import DatasetDict
 from transformers import (
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
-    TrainingArguments,
     WhisperForConditionalGeneration,
     WhisperProcessor,
 )
@@ -86,6 +85,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    try:
+        import transformers  # type: ignore
+
+        print("transformers:", getattr(transformers, "__version__", "unknown"))
+    except Exception:
+        pass
 
     ds_dict: DatasetDict = load_hf_dataset(args.dataset, args.config)
     train_split, eval_split = pick_splits(ds_dict)
@@ -169,64 +175,50 @@ def main() -> None:
 
     generation_max_length = 225
 
-    # Create TrainingArguments with a resilient fallback to handle
-    # different `transformers` versions that may not accept all kwargs
-    try:
-        training_args = Seq2SeqTrainingArguments(
-            output_dir=args.output_dir,
-            per_device_train_batch_size=args.per_device_train_batch_size,
-            per_device_eval_batch_size=args.per_device_eval_batch_size,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            learning_rate=args.learning_rate,
-            warmup_steps=args.warmup_steps,
-            num_train_epochs=args.num_train_epochs,
-            max_steps=args.max_steps if args.max_steps and args.max_steps > 0 else -1,
-            evaluation_strategy="steps",
-            eval_steps=args.eval_steps,
-            save_steps=args.save_steps,
-            logging_steps=args.logging_steps,
-            save_total_limit=args.save_total_limit,
-            predict_with_generate=True,
-            generation_max_length=generation_max_length,
-            report_to=[],
-            fp16=args.fp16,
-            bf16=args.bf16,
-            seed=args.seed,
-            dataloader_num_workers=2,
-            remove_unused_columns=False,
-        )
-    except TypeError:
-        # Fallback: some transformers versions have different signature
-        print(
-            "Seq2SeqTrainingArguments rejected some kwargs — falling back to TrainingArguments."
-        )
-        training_args = TrainingArguments(
-            output_dir=args.output_dir,
-            per_device_train_batch_size=args.per_device_train_batch_size,
-            per_device_eval_batch_size=args.per_device_eval_batch_size,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            learning_rate=args.learning_rate,
-            warmup_steps=args.warmup_steps,
-            num_train_epochs=args.num_train_epochs,
-            max_steps=args.max_steps if args.max_steps and args.max_steps > 0 else -1,
-            logging_steps=args.logging_steps,
-            save_total_limit=args.save_total_limit,
-            report_to=[],
-            fp16=args.fp16,
-            bf16=args.bf16,
-            seed=args.seed,
-            dataloader_num_workers=2,
-            remove_unused_columns=False,
-        )
-        # Set attributes that may not exist in the constructor
-        try:
-            setattr(training_args, "evaluation_strategy", "steps")
-            setattr(training_args, "eval_steps", args.eval_steps)
-            setattr(training_args, "save_steps", args.save_steps)
-            setattr(training_args, "predict_with_generate", True)
-            setattr(training_args, "generation_max_length", generation_max_length)
-        except Exception:
-            pass
+    # Build Seq2SeqTrainingArguments in a version-tolerant way:
+    # - Different transformers versions have slightly different kwarg names
+    #   (e.g. evaluation_strategy vs eval_strategy).
+    # - Passing unsupported kwargs raises TypeError.
+    # We inspect the constructor signature and only pass supported kwargs.
+    sig_params = set(inspect.signature(Seq2SeqTrainingArguments.__init__).parameters.keys())
+
+    kwargs: Dict[str, Any] = {
+        "output_dir": args.output_dir,
+        "per_device_train_batch_size": args.per_device_train_batch_size,
+        "per_device_eval_batch_size": args.per_device_eval_batch_size,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "learning_rate": args.learning_rate,
+        "warmup_steps": args.warmup_steps,
+        "num_train_epochs": args.num_train_epochs,
+        "max_steps": args.max_steps if args.max_steps and args.max_steps > 0 else -1,
+        "logging_steps": args.logging_steps,
+        "save_steps": args.save_steps,
+        "save_total_limit": args.save_total_limit,
+        "report_to": [],
+        "fp16": args.fp16,
+        "bf16": args.bf16,
+        "seed": args.seed,
+        "dataloader_num_workers": 2,
+        "remove_unused_columns": False,
+    }
+
+    # Evaluation strategy key name changed in some versions
+    if "evaluation_strategy" in sig_params:
+        kwargs["evaluation_strategy"] = "steps"
+        kwargs["eval_steps"] = args.eval_steps
+    elif "eval_strategy" in sig_params:
+        kwargs["eval_strategy"] = "steps"
+        kwargs["eval_steps"] = args.eval_steps
+
+    # Predict-with-generate + generation length are specific to seq2seq
+    if "predict_with_generate" in sig_params:
+        kwargs["predict_with_generate"] = True
+    if "generation_max_length" in sig_params:
+        kwargs["generation_max_length"] = generation_max_length
+
+    # Filter out unsupported kwargs
+    filtered_kwargs = {k: v for k, v in kwargs.items() if k in sig_params}
+    training_args = Seq2SeqTrainingArguments(**filtered_kwargs)
 
     trainer_kwargs: Dict[str, Any] = {
         "args": training_args,
