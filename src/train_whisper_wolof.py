@@ -58,6 +58,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text_col", default=None)
     parser.add_argument("--sampling_rate", type=int, default=16000)
 
+    # Whisper has a hard limit on decoder labels length (typically 448 tokens).
+    # If a transcript tokenizes longer than this, training crashes.
+    parser.add_argument(
+        "--max_label_length",
+        type=int,
+        default=448,
+        help="Max target token length for labels (Whisper limit is usually 448).",
+    )
+
     parser.add_argument("--output_dir", default="outputs/whisper-small-wo")
     parser.add_argument("--num_train_epochs", type=float, default=3.0)
     parser.add_argument("--max_steps", type=int, default=-1, help="Override epochs if > 0")
@@ -138,7 +147,11 @@ def main() -> None:
         batch["input_features"] = inputs["input_features"][0]
 
         text = safe_get_text(batch, text_col)
-        batch["labels"] = processor.tokenizer(text, truncation=True).input_ids
+        batch["labels"] = processor.tokenizer(
+            text,
+            truncation=True,
+            max_length=args.max_label_length,
+        ).input_ids
         return batch
 
     ds_train = ds_dict[train_split].map(
