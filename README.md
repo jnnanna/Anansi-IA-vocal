@@ -30,7 +30,6 @@ Exemple (adaptable):
 python -m src.train_whisper_wolof \
   --dataset KeraCare/Wolof-Kallaama \
   --model openai/whisper-small \
-  --language wolof \
   --output_dir outputs/whisper-small-wo \
   --max_steps 2000
 ```
@@ -43,6 +42,23 @@ python -m src.evaluate_wer --model_dir outputs/whisper-small-wo
 ## 5) Démo assistant vocal (micro)
 ```powershell
 python -m src.voice_assistant_demo --model_dir outputs/whisper-small-wo --seconds 5
+```
+
+## 6) Démo web (upload audio → transcription)
+```powershell
+pip install -r requirements.txt
+streamlit run web/streamlit_app.py
+```
+
+Tu peux utiliser un modèle fine-tuné en mettant le dossier local du modèle dans la barre latérale
+("Chemin local du modèle").
+
+## 7) CLI transcription (fichier audio)
+```powershell
+python -m src.transcribe_file --audio path\\to\\audio.wav --model openai/whisper-small
+
+# ou modèle local
+python -m src.transcribe_file --audio path\\to\\audio.wav --model_dir outputs\\whisper-small-wo
 ```
 
 ## Colab
