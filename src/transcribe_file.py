@@ -60,7 +60,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    from transformers import WhisperForConditionalGeneration, WhisperProcessor  # lazy import
+    from transformers import (
+        WhisperFeatureExtractor,
+        WhisperForConditionalGeneration,
+        WhisperProcessor,
+        WhisperTokenizer,
+    )  # lazy import
 
     model_source = args.model
     local_only = False
@@ -74,7 +79,16 @@ def main() -> None:
 
     device = _select_device(args.device)
 
-    processor = WhisperProcessor.from_pretrained(model_source, local_files_only=local_only)
+    try:
+        feature_extractor = WhisperFeatureExtractor.from_pretrained(model_source, local_files_only=local_only)
+        tokenizer = WhisperTokenizer.from_pretrained(model_source, local_files_only=local_only)
+        processor = WhisperProcessor(feature_extractor=feature_extractor, tokenizer=tokenizer)
+    except Exception as e:
+        raise RuntimeError(
+            "Impossible de charger processor/tokenizer depuis le modèle. "
+            "Vérifie que --model_dir pointe vers un dossier qui contient config.json + tokenizer.* + processor_config.json.\n"
+            f"Erreur: {type(e).__name__}: {e}"
+        ) from e
     model = WhisperForConditionalGeneration.from_pretrained(model_source, local_files_only=local_only)
     model.to(device)
     model.eval()

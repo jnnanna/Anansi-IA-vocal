@@ -6,6 +6,10 @@ evaluate>=0.4.0
 jiwer>=3.0.0
 tqdm>=4.66.0
 
+# Tokenizers backends (needed by Whisper tokenizer on some setups)
+sentencepiece>=0.1.99
+tiktoken>=0.6.0
+
 # Audio
 soundfile>=0.12.1
 librosa>=0.10.1

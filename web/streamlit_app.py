@@ -57,9 +57,27 @@ def _resample(audio: np.ndarray, sr: int, target_sr: int = 16000) -> Tuple[np.nd
 
 @st.cache_resource(show_spinner=False)
 def _load_model(model_source: str, local_only: bool, device: str):
-    from transformers import WhisperForConditionalGeneration, WhisperProcessor
+    # We intentionally build the processor from the *slow* Whisper tokenizer.
+    # This avoids some Windows environments failing to instantiate the "fast" tokenizer backend.
+    from transformers import (
+        WhisperFeatureExtractor,
+        WhisperForConditionalGeneration,
+        WhisperProcessor,
+        WhisperTokenizer,
+    )
 
-    processor = WhisperProcessor.from_pretrained(model_source, local_files_only=local_only)
+    try:
+        feature_extractor = WhisperFeatureExtractor.from_pretrained(model_source, local_files_only=local_only)
+        tokenizer = WhisperTokenizer.from_pretrained(model_source, local_files_only=local_only)
+        processor = WhisperProcessor(feature_extractor=feature_extractor, tokenizer=tokenizer)
+    except Exception as e:
+        raise RuntimeError(
+            "Impossible de charger le processor/tokenizer depuis ce dossier.\n"
+            "Vérifie que tu pointes vers le BON dossier (celui qui contient config.json, model.safetensors, tokenizer.json...).\n\n"
+            f"Dossier: {model_source}\n"
+            f"Erreur: {type(e).__name__}: {e}"
+        ) from e
+
     model = WhisperForConditionalGeneration.from_pretrained(model_source, local_files_only=local_only)
     model.to(device)
     model.eval()
