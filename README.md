@@ -55,11 +55,31 @@ Tu peux utiliser un modèle fine-tuné en mettant le dossier local du modèle da
 
 ## 7) CLI transcription (fichier audio)
 ```powershell
-python -m src.transcribe_file --audio path\\to\\audio.wav --model openai/whisper-small
+python -m src.transcribe_file --audio path\to\audio.wav --model openai/whisper-small
 
 # ou modèle local
-python -m src.transcribe_file --audio path\\to\\audio.wav --model_dir outputs\\whisper-small-wo
+python -m src.transcribe_file --audio path\to\audio.wav --model_dir outputs\whisper-small-wo
 ```
+
+## 8) Assistant vocal push-to-talk (micro → ASR → réponse → TTS)
+Lance le serveur API + la page web push-to-talk :
+```powershell
+# Depuis le dossier du projet, venv activé
+pip install -r requirements.txt
+
+# Lancer le serveur (remplace le chemin modèle par le tien)
+python web/api_server.py --model_dir "C:\models\anansi_wolof_outputs\checkpoint-1200"
+```
+Ouvre http://localhost:8000 dans ton navigateur.
+- Clique sur le bouton micro 🎤 (ou appuie sur Espace)
+- Parle en wolof
+- Reclique (ou Espace) → la transcription s'affiche + Anansi répond
+- La réponse est lue à voix haute (TTS navigateur, désactivable)
+
+> Note : le TTS utilise la synthèse vocale du navigateur (Web Speech API).
+> Pour le wolof, la voix sera approximative (fr-FR). Un vrai TTS wolof
+> pourra être intégré plus tard.
+> pourra être intégré plus tard.
 
 ## Colab
 Voir `scripts/colab_setup.md`.

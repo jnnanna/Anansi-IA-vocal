@@ -23,5 +23,10 @@ pyttsx3>=2.90
 # Web demo
 streamlit>=1.32.0
 
+# API server (assistant vocal)
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
 # Optional / requested (offline ASR alternative)
 vosk>=0.3.45

@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Anansi — Assistant Vocal Wolof</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card: #1a1d27;
+      --accent: #ff6b35;
+      --accent2: #ffc107;
+      --text: #e8e8e8;
+      --muted: #888;
+      --success: #4caf50;
+      --danger: #f44336;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 4px;
+      color: var(--accent);
+    }
+    .subtitle {
+      color: var(--muted);
+      margin-bottom: 24px;
+      font-size: 0.95rem;
+    }
+
+    /* ── Chat area ────────────────────────── */
+    #chat {
+      width: 100%;
+      max-width: 520px;
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px 0;
+      margin-bottom: 16px;
+    }
+    .bubble {
+      max-width: 85%;
+      padding: 12px 16px;
+      border-radius: 16px;
+      line-height: 1.45;
+      font-size: 0.95rem;
+      animation: fadeIn 0.25s ease;
+    }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+    .bubble.user {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.bot {
+      align-self: flex-start;
+      background: var(--card);
+      border-bottom-left-radius: 4px;
+    }
+    .bubble .label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      opacity: 0.6;
+      margin-bottom: 4px;
+    }
+
+    /* ── Controls ──────────────────────────── */
+    .controls {
+      width: 100%;
+      max-width: 520px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    #recordBtn {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      border: 4px solid var(--accent);
+      background: transparent;
+      color: var(--accent);
+      font-size: 1.8rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #recordBtn:hover { background: rgba(255,107,53,0.15); }
+    #recordBtn.recording {
+      border-color: var(--danger);
+      color: var(--danger);
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse { 0%,100%{ box-shadow:0 0 0 0 rgba(244,67,54,0.4); } 50%{ box-shadow:0 0 0 14px rgba(244,67,54,0); } }
+    #status {
+      font-size: 0.85rem;
+      color: var(--muted);
+      min-height: 1.2em;
+    }
+
+    /* ── TTS toggle ────────────────────────── */
+    .tts-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .tts-row input[type="checkbox"] { accent-color: var(--accent); }
+
+    /* ── Responsive ────────────────────────── */
+    @media (max-width: 480px) {
+      h1 { font-size: 1.5rem; }
+      #recordBtn { width: 68px; height: 68px; font-size: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🕷️ Anansi</h1>
+  <p class="subtitle">Assistant vocal Wolof — push to talk</p>
+
+  <div id="chat"></div>
+
+  <div class="controls">
+    <button id="recordBtn" title="Maintenir pour parler">🎤</button>
+    <span id="status">Appuie pour parler</span>
+    <div class="tts-row">
+      <input type="checkbox" id="ttsToggle" checked />
+      <label for="ttsToggle">Lire la réponse à voix haute</label>
+    </div>
+  </div>
+
+<script>
+// ── Config ───────────────────────────────────
+const API_BASE = window.location.origin;   // same origin as FastAPI
+const VOICE_ENDPOINT = `${API_BASE}/voice`;
+
+// ── DOM refs ─────────────────────────────────
+const chatEl     = document.getElementById('chat');
+const recordBtn  = document.getElementById('recordBtn');
+const statusEl   = document.getElementById('status');
+const ttsToggle  = document.getElementById('ttsToggle');
+
+// ── State ────────────────────────────────────
+let mediaRecorder = null;
+let audioChunks   = [];
+let recording     = false;
+
+// ── Helpers ──────────────────────────────────
+function addBubble(text, who) {
+  const div = document.createElement('div');
+  div.className = `bubble ${who}`;
+  const label = document.createElement('div');
+  label.className = 'label';
+  label.textContent = who === 'user' ? 'Toi' : 'Anansi';
+  div.appendChild(label);
+  const content = document.createElement('div');
+  content.textContent = text;
+  div.appendChild(content);
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function speak(text) {
+  if (!ttsToggle.checked) return;
+  if (!('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'fr-FR';   // closest available; Wolof TTS not in browsers yet
+  u.rate = 0.95;
+  speechSynthesis.speak(u);
+}
+
+function setStatus(msg) { statusEl.textContent = msg; }
+
+// ── Recording ────────────────────────────────
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    // Prefer WAV (audio/webm is more common in browsers)
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : 'audio/webm';
+
+    mediaRecorder = new MediaRecorder(stream, { mimeType });
+    audioChunks = [];
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(audioChunks, { type: mimeType });
+      await sendAudio(blob);
+    };
+
+    mediaRecorder.start();
+    recording = true;
+    recordBtn.classList.add('recording');
+    recordBtn.textContent = '⏹';
+    setStatus('Enregistrement en cours… Appuie pour arrêter');
+  } catch (err) {
+    setStatus(`Erreur micro: ${err.message}`);
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  recording = false;
+  recordBtn.classList.remove('recording');
+  recordBtn.textContent = '🎤';
+  setStatus('Traitement…');
+}
+
+// ── Send to backend ──────────────────────────
+async function sendAudio(blob) {
+  const fd = new FormData();
+  fd.append('audio', blob, 'recording.webm');
+
+  try {
+    const res  = await fetch(VOICE_ENDPOINT, { method: 'POST', body: fd });
+    const json = await res.json();
+
+    if (!res.ok) {
+      setStatus(`Erreur serveur: ${json.detail || res.statusText}`);
+      return;
+    }
+
+    const transcription = json.transcription || '(vide)';
+    const response      = json.response || '';
+
+    addBubble(transcription, 'user');
+    if (response) {
+      addBubble(response, 'bot');
+      speak(response);
+    }
+    setStatus('Appuie pour parler');
+  } catch (err) {
+    setStatus(`Erreur réseau: ${err.message}`);
+  }
+}
+
+// ── Events ───────────────────────────────────
+recordBtn.addEventListener('click', () => {
+  if (!recording) startRecording();
+  else stopRecording();
+});
+
+// Keyboard shortcut: Space bar to toggle recording
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
+    e.preventDefault();
+    if (!recording) startRecording();
+    else stopRecording();
+  }
+});
+</script>
+
+</body>
+</html>
