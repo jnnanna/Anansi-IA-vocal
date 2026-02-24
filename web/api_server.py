@@ -29,10 +29,66 @@ from fastapi.staticfiles import StaticFiles
 # Audio helpers
 # ---------------------------------------------------------------------------
 
-def _bytes_to_mono_16k(data: bytes) -> Tuple[np.ndarray, int]:
-    """Decode raw audio bytes into mono float32 @ 16 kHz."""
+def _ffmpeg_to_wav(input_path: str, output_path: str) -> bool:
+    """Convert any audio format to WAV 16kHz mono using ffmpeg subprocess."""
+    import shutil
+    import subprocess
 
-    # Try soundfile first (WAV / FLAC / OGG)
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if ffmpeg_bin is None:
+        return False
+
+    try:
+        subprocess.run(
+            [
+                ffmpeg_bin, "-y",
+                "-i", input_path,
+                "-ac", "1",           # mono
+                "-ar", "16000",       # 16 kHz
+                "-f", "wav",
+                "-sample_fmt", "s16", # PCM 16-bit
+                output_path,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _bytes_to_mono_16k(data: bytes) -> Tuple[np.ndarray, int]:
+    """Decode raw audio bytes into mono float32 @ 16 kHz.
+
+    Strategy:
+    1. Try ffmpeg (handles webm, mp3, ogg, m4a, wav, etc.)
+    2. Fall back to soundfile (WAV / FLAC)
+    3. Fall back to librosa + audioread
+    """
+
+    # ── Strategy 1: ffmpeg (most reliable for browser WebM) ──
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_in:
+        tmp_in.write(data)
+        tmp_in_path = tmp_in.name
+
+    tmp_wav_path = tmp_in_path + ".wav"
+
+    try:
+        if _ffmpeg_to_wav(tmp_in_path, tmp_wav_path):
+            import soundfile as sf
+            audio, sr = sf.read(tmp_wav_path)
+            if audio.ndim > 1:
+                audio = audio[:, 0]
+            return audio.astype(np.float32), int(sr)
+    finally:
+        for p in (tmp_in_path, tmp_wav_path):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+    # ── Strategy 2: soundfile (WAV / FLAC in-memory) ──
     try:
         import soundfile as sf
         audio, sr = sf.read(io.BytesIO(data))
@@ -40,7 +96,7 @@ def _bytes_to_mono_16k(data: bytes) -> Tuple[np.ndarray, int]:
             audio = audio[:, 0]
         audio = audio.astype(np.float32)
     except Exception:
-        # Fallback via librosa (needs ffmpeg for webm/mp3)
+        # ── Strategy 3: librosa / audioread ──
         import librosa
         with tempfile.NamedTemporaryFile(delete=False, suffix=".audio") as tmp:
             tmp.write(data)
