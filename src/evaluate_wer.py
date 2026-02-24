@@ -41,12 +41,27 @@ def main() -> None:
             f"Got: {args.model_dir}"
         )
 
-    required_files = ["config.json", "preprocessor_config.json"]
+    # transformers versions differ in how the processor is saved:
+    # - some write `preprocessor_config.json`
+    # - others write `processor_config.json`
+    # We'll accept either as long as we can load `WhisperProcessor`.
+    required_files = ["config.json"]
     missing = [f for f in required_files if not os.path.exists(os.path.join(args.model_dir, f))]
     if missing:
         raise FileNotFoundError(
             "Model directory exists but is missing required files. Training may have crashed before saving. "
             f"Missing: {missing} in {args.model_dir}"
+        )
+
+    has_any_processor_cfg = any(
+        os.path.exists(os.path.join(args.model_dir, name))
+        for name in ("preprocessor_config.json", "processor_config.json")
+    )
+    if not has_any_processor_cfg:
+        raise FileNotFoundError(
+            "Model directory exists but is missing processor config. Expected `preprocessor_config.json` "
+            "or `processor_config.json`. "
+            f"Got: {args.model_dir}"
         )
 
     processor = WhisperProcessor.from_pretrained(args.model_dir, local_files_only=True)
@@ -76,10 +91,22 @@ def main() -> None:
     refs: List[str] = []
 
     for start in tqdm(range(0, len(ds_eval), args.batch_size), desc="Evaluating"):
-        batch = ds_eval[start : start + args.batch_size]
+        end = min(start + args.batch_size, len(ds_eval))
+        batch = ds_eval[start:end]
 
-        audio_arrays = [ex[audio_col]["array"] for ex in batch]
-        srs = [ex[audio_col]["sampling_rate"] for ex in batch]
+        # `datasets.Dataset.__getitem__` with a slice returns a dict-of-lists.
+        # Some older patterns/versions may yield an iterable of dicts.
+        if isinstance(batch, dict):
+            audio_items = batch[audio_col]
+            audio_arrays = [a["array"] for a in audio_items]
+            srs = [a["sampling_rate"] for a in audio_items]
+            ref_text = batch.get(text_col, [])
+            ref_text = [str(t).strip() for t in ref_text]
+        else:
+            audio_arrays = [ex[audio_col]["array"] for ex in batch]
+            srs = [ex[audio_col]["sampling_rate"] for ex in batch]
+            ref_text = [safe_get_text(ex, text_col).strip() for ex in batch]
+
         if len(set(srs)) != 1:
             raise ValueError(f"Mixed sampling rates in batch: {set(srs)}")
 
@@ -88,8 +115,6 @@ def main() -> None:
 
         predicted_ids = model.generate(input_features)
         pred_text = processor.tokenizer.batch_decode(predicted_ids, skip_special_tokens=True)
-
-        ref_text = [safe_get_text(ex, text_col) for ex in batch]
 
         preds.extend([t.strip() for t in pred_text])
         refs.extend([t.strip() for t in ref_text])
