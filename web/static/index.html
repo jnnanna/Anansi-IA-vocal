@@ -121,7 +121,36 @@
       color: var(--muted);
     }
     .tts-row input[type="checkbox"] { accent-color: var(--accent); }
-
+    /* ── Settings panel ─────────────────────── */
+    .settings {
+      width: 100%;
+      max-width: 520px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 10px;
+      padding: 14px 16px;
+      background: var(--card);
+      border-radius: 12px;
+    }
+    .settings label {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-right: 6px;
+    }
+    .settings select {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.82rem;
+      cursor: pointer;
+    }
+    .setting-row {
+      display: flex;
+      align-items: center;
+    }
     /* ── Responsive ────────────────────────── */
     @media (max-width: 480px) {
       h1 { font-size: 1.5rem; }
@@ -145,21 +174,77 @@
     </div>
   </div>
 
+  <!-- Voice & TTS settings -->
+  <div class="settings">
+    <div class="setting-row">
+      <label for="ttsMode">📢 Mode TTS :</label>
+      <select id="ttsMode">
+        <option value="server" selected>🔊 Serveur (edge-tts)</option>
+        <option value="browser">🌐 Navigateur (léger)</option>
+      </select>
+    </div>
+    <div class="setting-row" id="voiceRow">
+      <label for="voiceSelect">🎙️ Voix :</label>
+      <select id="voiceSelect"></select>
+    </div>
+  </div>
+
 <script>
 // ── Config ───────────────────────────────────
-const API_BASE = window.location.origin;   // same origin as FastAPI
+const API_BASE = window.location.origin;
 const VOICE_ENDPOINT = `${API_BASE}/voice`;
+const SESSION_ID = crypto.randomUUID ? crypto.randomUUID() : `s_${Date.now()}`;
 
 // ── DOM refs ─────────────────────────────────
-const chatEl     = document.getElementById('chat');
-const recordBtn  = document.getElementById('recordBtn');
-const statusEl   = document.getElementById('status');
-const ttsToggle  = document.getElementById('ttsToggle');
+const chatEl        = document.getElementById('chat');
+const recordBtn     = document.getElementById('recordBtn');
+const statusEl      = document.getElementById('status');
+const ttsToggle     = document.getElementById('ttsToggle');
+const ttsModeEl     = document.getElementById('ttsMode');
+const voiceSelectEl = document.getElementById('voiceSelect');
+const voiceRowEl    = document.getElementById('voiceRow');
 
 // ── State ────────────────────────────────────
 let mediaRecorder = null;
 let audioChunks   = [];
 let recording     = false;
+let previewAudio  = null;
+
+// ── Init: load voices from backend ──────────
+async function loadVoices() {
+  try {
+    const res  = await fetch(`${API_BASE}/voices`);
+    const data = await res.json();
+    voiceSelectEl.innerHTML = '';
+    for (const [id, label] of Object.entries(data.voices)) {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = label;
+      if (id === data.default) opt.selected = true;
+      voiceSelectEl.appendChild(opt);
+    }
+  } catch (e) { console.warn('Could not load voices:', e); }
+}
+loadVoices();
+
+// ── Voice preview (auto-play Wolof sample on change) ──
+voiceSelectEl.addEventListener('change', async () => {
+  const voice = voiceSelectEl.value;
+  if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+  try {
+    const res = await fetch(`${API_BASE}/tts_preview?voice=${encodeURIComponent(voice)}&lang=wol`);
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    previewAudio = new Audio(url);
+    previewAudio.play();
+  } catch (e) { console.warn('Preview failed:', e); }
+});
+
+// ── TTS mode toggle ──────────────────────────
+ttsModeEl.addEventListener('change', () => {
+  voiceRowEl.style.display = ttsModeEl.value === 'server' ? 'flex' : 'none';
+});
 
 // ── Helpers ──────────────────────────────────
 function addBubble(text, who) {
@@ -176,13 +261,36 @@ function addBubble(text, who) {
   chatEl.scrollTop = chatEl.scrollHeight;
 }
 
-function speak(text) {
+async function speak(text) {
   if (!ttsToggle.checked) return;
-  if (!('speechSynthesis' in window)) return;
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'fr-FR';   // closest available; Wolof TTS not in browsers yet
-  u.rate = 0.95;
-  speechSynthesis.speak(u);
+
+  // ── Server TTS (edge-tts) ──
+  if (ttsModeEl.value === 'server') {
+    try {
+      const res = await fetch(`${API_BASE}/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: voiceSelectEl.value }),
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        const a    = new Audio(url);
+        a.play();
+        return;
+      }
+    } catch (e) {
+      console.warn('Server TTS failed, falling back to browser:', e);
+    }
+  }
+
+  // ── Browser fallback (Web Speech API) ──
+  if ('speechSynthesis' in window) {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'fr-FR';
+    u.rate = 0.95;
+    speechSynthesis.speak(u);
+  }
 }
 
 function setStatus(msg) { statusEl.textContent = msg; }
@@ -191,12 +299,8 @@ function setStatus(msg) { statusEl.textContent = msg; }
 async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-    // Prefer WAV (audio/webm is more common in browsers)
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
-
+      ? 'audio/webm;codecs=opus' : 'audio/webm';
     mediaRecorder = new MediaRecorder(stream, { mimeType });
     audioChunks = [];
 
@@ -234,6 +338,7 @@ function stopRecording() {
 async function sendAudio(blob) {
   const fd = new FormData();
   fd.append('audio', blob, 'recording.webm');
+  fd.append('session_id', SESSION_ID);
 
   try {
     const res  = await fetch(VOICE_ENDPOINT, { method: 'POST', body: fd });
@@ -250,7 +355,7 @@ async function sendAudio(blob) {
     addBubble(transcription, 'user');
     if (response) {
       addBubble(response, 'bot');
-      speak(response);
+      await speak(response);
     }
     setStatus('Appuie pour parler');
   } catch (err) {
@@ -264,9 +369,8 @@ recordBtn.addEventListener('click', () => {
   else stopRecording();
 });
 
-// Keyboard shortcut: Space bar to toggle recording
 document.addEventListener('keydown', (e) => {
-  if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
+  if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
     e.preventDefault();
     if (!recording) startRecording();
     else stopRecording();

@@ -2,11 +2,18 @@
 __pycache__/
 *.pyc
 .venv/
+.venv311/
 venv/
 
 # HF/Training artifacts
 outputs/
 wandb/
+
+# Secrets
+.env
+
+# TTS cache (generated audio previews)
+web/static/tts_cache/
 
 # OS
 .DS_Store
